@@ -1,40 +1,89 @@
 "use client";
 
-import { useState } from "react";
-import { validatePass, type PassRecord } from "./data/passes";
+import { useState, useEffect, useRef } from "react";
 
-type Status = "idle" | "loading" | "valid" | "invalid";
+type Status = "idle" | "loading" | "valid" | "duplicate" | "invalid" | "error";
+
+interface StudentResult {
+  id: string;
+  name: string;
+  passNo: string | number;
+}
 
 export default function PassValidator() {
   const [admissionNo, setAdmissionNo] = useState("");
-  const [passId, setPassId] = useState("");
+  const [passNo, setPassNo] = useState("");
   const [status, setStatus] = useState<Status>("idle");
-  const [result, setResult] = useState<PassRecord | null>(null);
+  const [student, setStudent] = useState<StudentResult | null>(null);
+  const [errMsg, setErrMsg] = useState("");
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleCheck = (e: React.FormEvent) => {
+  // Auto-dismiss after 3 seconds
+  useEffect(() => {
+    if (["valid", "duplicate", "invalid", "error"].includes(status)) {
+      timerRef.current = setTimeout(() => {
+        setStatus("idle");
+        setStudent(null);
+        setErrMsg("");
+      }, 3000);
+    }
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [status]);
+
+  const handleCheck = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!admissionNo.trim() || !passId.trim()) return;
+    if (!admissionNo.trim() || !passNo.trim()) return;
+
     setStatus("loading");
-    setResult(null);
-    setTimeout(() => {
-      const found = validatePass(admissionNo, passId);
-      setResult(found);
-      setStatus(found ? "valid" : "invalid");
-    }, 700);
+    setStudent(null);
+    setErrMsg("");
+
+    try {
+      const res = await fetch("/api/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ admissionNo: admissionNo.trim(), passNo: passNo.trim() }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setErrMsg(data.error ?? "Something went wrong.");
+        setStatus("error");
+        return;
+      }
+
+      if (!data.found) {
+        setStatus("invalid");
+        return;
+      }
+
+      setStudent(data.student);
+      setStatus(data.alreadyChecked ? "duplicate" : "valid");
+      // Clear admission input, auto-increment pass number by 1
+      setAdmissionNo("");
+      const currentPass = parseInt(passNo, 10);
+      setPassNo(isNaN(currentPass) ? "1" : String(currentPass + 1));
+    } catch {
+      setErrMsg("Network error. Is the server running?");
+      setStatus("error");
+    }
   };
 
-  const handleReset = () => {
-    setAdmissionNo("");
-    setPassId("");
+  const dismissToast = () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
     setStatus("idle");
-    setResult(null);
+    setStudent(null);
+    setErrMsg("");
   };
+
+  const isToastShown = ["valid", "duplicate", "invalid", "error"].includes(status);
 
   return (
     <div className="root">
       <div className="card">
-
-        {/* Top accent bar */}
         <div className="accent-bar" />
 
         {/* Header */}
@@ -50,140 +99,147 @@ export default function PassValidator() {
           <span className="rule-line" />
         </div>
 
-        {/* Form */}
-        {status !== "valid" && status !== "invalid" && (
-          <form id="pass-check-form" className="form" onSubmit={handleCheck}>
-            <div className="field-wrap">
-              <label className="field-label" htmlFor="admission-input">
-                Admission Number
-              </label>
-              <div className={`field${admissionNo ? " has-value" : ""}`}>
-                <svg className="f-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                  <path d="M12 2C9.24 2 7 4.24 7 7s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5z"/>
-                  <path d="M21 21v-1a7 7 0 0 0-14 0v1"/>
-                </svg>
-                <input
-                  id="admission-input"
-                  type="text"
-                  className="f-input"
-                  placeholder="e.g. 2301001"
-                  value={admissionNo}
-                  onChange={(e) => setAdmissionNo(e.target.value)}
-                  autoComplete="off"
-                  autoFocus
-                />
-              </div>
+        {/* Form — always visible */}
+        <form id="pass-check-form" className="form" onSubmit={handleCheck}>
+          <div className="field-wrap">
+            <label className="field-label" htmlFor="admission-input">
+              Admission Number
+            </label>
+            <div className={`field${admissionNo ? " has-value" : ""}`}>
+              <svg className="f-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M12 2C9.24 2 7 4.24 7 7s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5z" />
+                <path d="M21 21v-1a7 7 0 0 0-14 0v1" />
+              </svg>
+              <input
+                id="admission-input"
+                type="text"
+                className="f-input"
+                placeholder="e.g. 2021HA0001"
+                value={admissionNo}
+                onChange={(e) => setAdmissionNo(e.target.value)}
+                autoComplete="off"
+                autoFocus
+              />
             </div>
+          </div>
 
-            <div className="field-wrap">
-              <label className="field-label" htmlFor="pass-id-input">
-                Pass ID
-              </label>
-              <div className={`field${passId ? " has-value" : ""}`}>
-                <svg className="f-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                  <rect x="2" y="7" width="20" height="14" rx="2"/>
-                  <path d="M16 7V5a4 4 0 0 0-8 0v2"/>
-                  <circle cx="12" cy="14" r="1.5"/>
-                </svg>
-                <input
-                  id="pass-id-input"
-                  type="text"
-                  className="f-input"
-                  placeholder="e.g. JALSA-001"
-                  value={passId}
-                  onChange={(e) => setPassId(e.target.value)}
-                  autoComplete="off"
-                />
-              </div>
+          <div className="field-wrap">
+            <label className="field-label" htmlFor="pass-input">
+              Pass Number
+            </label>
+            <div className={`field${passNo ? " has-value" : ""}`}>
+              <svg className="f-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 0 0-2 2v3a2 2 0 1 1 0 4v3a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3a2 2 0 1 1 0-4V7a2 2 0 0 0-2-2H5z" />
+              </svg>
+              <input
+                id="pass-input"
+                type="text"
+                className="f-input"
+                placeholder="e.g. 1"
+                value={passNo}
+                onChange={(e) => setPassNo(e.target.value)}
+                autoComplete="off"
+              />
             </div>
+          </div>
 
-            <button
-              id="validate-btn"
-              type="submit"
-              className={`submit-btn${status === "loading" ? " loading" : ""}`}
-              disabled={status === "loading" || !admissionNo.trim() || !passId.trim()}
-            >
-              {status === "loading" ? (
-                <span className="spinner" />
-              ) : (
-                <>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{width:16,height:16}}>
-                    <path d="M9 12l2 2 4-4"/>
-                    <circle cx="12" cy="12" r="10"/>
+          <button
+            id="validate-btn"
+            type="submit"
+            className={`submit-btn${status === "loading" ? " loading" : ""}`}
+            disabled={status === "loading" || !admissionNo.trim() || !passNo.trim()}
+          >
+            {status === "loading" ? (
+              <span className="spinner" />
+            ) : (
+              <>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 16, height: 16 }}>
+                  <path d="M9 12l2 2 4-4" />
+                  <circle cx="12" cy="12" r="10" />
+                </svg>
+                Validate Pass
+              </>
+            )}
+          </button>
+        </form>
+
+        {/* ── Toast Message Area ── */}
+        {isToastShown && (
+          <div className={`toast toast-${status}`} id={`toast-${status}`}>
+            <div className="toast-body">
+              {/* Icon */}
+              <div className={`toast-icon toast-icon-${status}`}>
+                {status === "valid" && (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M20 6L9 17l-5-5" />
                   </svg>
-                  Validate Pass
-                </>
-              )}
-            </button>
-          </form>
-        )}
+                )}
+                {status === "duplicate" && (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M12 9v4M12 17h.01" />
+                    <circle cx="12" cy="12" r="10" />
+                  </svg>
+                )}
+                {(status === "invalid" || status === "error") && (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M18 6L6 18M6 6l12 12" />
+                  </svg>
+                )}
+              </div>
 
-        {/* VALID */}
-        {status === "valid" && result && (
-          <div className="result-card valid-card" id="valid-result">
-            <div className="result-badge valid-badge">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M20 6L9 17l-5-5"/>
-              </svg>
+              {/* Content */}
+              <div className="toast-content">
+                {status === "valid" && student && (
+                  <>
+                    <p className="toast-title valid-title">Entry Granted</p>
+                    <div className="toast-details">
+                      <span>Pass #{student.passNo}</span>
+                      <span className="toast-sep">·</span>
+                      <span>{student.id}</span>
+                      <span className="toast-sep">·</span>
+                      <span>{student.name}</span>
+                    </div>
+                  </>
+                )}
+                {status === "duplicate" && student && (
+                  <>
+                    <p className="toast-title duplicate-title">Already Checked In</p>
+                    <div className="toast-details">
+                      <span>Pass #{student.passNo}</span>
+                      <span className="toast-sep">·</span>
+                      <span>{student.id}</span>
+                      <span className="toast-sep">·</span>
+                      <span>{student.name}</span>
+                    </div>
+                  </>
+                )}
+                {status === "invalid" && (
+                  <>
+                    <p className="toast-title invalid-title">Not Found</p>
+                    <p className="toast-sub">No matching record. Check the admission number.</p>
+                  </>
+                )}
+                {status === "error" && (
+                  <>
+                    <p className="toast-title invalid-title">Error</p>
+                    <p className="toast-sub">{errMsg}</p>
+                  </>
+                )}
+              </div>
+
+              {/* Dismiss */}
+              <button className="toast-close" onClick={dismissToast} aria-label="Dismiss">×</button>
             </div>
-            <p className="result-title valid-title">Pass Validated</p>
 
-            <div className="info-grid">
-              <div className="info-item">
-                <span className="info-key">Name</span>
-                <span className="info-val">{result.name}</span>
-              </div>
-              <div className="info-item">
-                <span className="info-key">Admission No.</span>
-                <span className="info-val">{result.admissionNo}</span>
-              </div>
-              <div className="info-item">
-                <span className="info-key">Pass ID</span>
-                <span className="info-val">{result.passId}</span>
-              </div>
-              <div className="info-item">
-                <span className="info-key">Event</span>
-                <span className="info-val">{result.event}</span>
-              </div>
-              {result.seat && (
-                <div className="info-item">
-                  <span className="info-key">Seat</span>
-                  <span className="info-val">{result.seat}</span>
-                </div>
-              )}
+            {/* Countdown progress bar */}
+            <div className="toast-progress">
+              <div className={`toast-progress-bar progress-${status}`} />
             </div>
-
-            <button id="reset-btn-valid" className="ghost-btn" onClick={handleReset}>
-              ← Check Another Pass
-            </button>
           </div>
         )}
-
-        {/* INVALID */}
-        {status === "invalid" && (
-          <div className="result-card invalid-card" id="invalid-result">
-            <div className="result-badge invalid-badge">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M18 6L6 18M6 6l12 12"/>
-              </svg>
-            </div>
-            <p className="result-title invalid-title">Pass Not Found</p>
-            <p className="result-desc">
-              No record matched the provided Admission Number and Pass ID.
-              Please verify the details and try again.
-            </p>
-            <button id="reset-btn-invalid" className="ghost-btn" onClick={handleReset}>
-              ← Try Again
-            </button>
-          </div>
-        )}
-
-        {/* Footer */}
-
       </div>
 
       <style jsx>{`
-        /* ── Root ─────────────────────────────────────────── */
         .root {
           min-height: 100vh;
           display: flex;
@@ -196,7 +252,6 @@ export default function PassValidator() {
             radial-gradient(ellipse at 70% 80%, rgba(168,85,247,0.05) 0%, transparent 60%);
         }
 
-        /* ── Card ─────────────────────────────────────────── */
         .card {
           width: 100%;
           max-width: 420px;
@@ -208,29 +263,23 @@ export default function PassValidator() {
             0 0 0 1px rgba(255,255,255,0.03),
             0 24px 60px rgba(0,0,0,0.7),
             0 8px 20px rgba(0,0,0,0.4);
-          display: flex;
-          flex-direction: column;
         }
 
-        /* ── Top accent bar ───────────────────────────────── */
         .accent-bar {
           height: 3px;
           background: linear-gradient(90deg, #6366f1, #a855f7, #ec4899, #a855f7, #6366f1);
           background-size: 200% 100%;
           animation: slideGrad 4s linear infinite;
         }
-
         @keyframes slideGrad {
           0%   { background-position: 0% 0%; }
           100% { background-position: 200% 0%; }
         }
 
-        /* ── Header ───────────────────────────────────────── */
         .header {
           padding: 32px 32px 0;
           text-align: center;
         }
-
         .event-tag {
           font-size: 0.65rem;
           font-weight: 600;
@@ -239,12 +288,10 @@ export default function PassValidator() {
           text-transform: uppercase;
           margin-bottom: 8px;
         }
-
         .jalsa-title {
           font-size: 3rem;
           font-weight: 900;
           letter-spacing: 10px;
-          color: #fff;
           margin: 0;
           line-height: 1;
           font-family: 'Georgia', serif;
@@ -254,299 +301,164 @@ export default function PassValidator() {
           background-clip: text;
         }
 
-        .header-sub {
-          font-size: 0.72rem;
-          letter-spacing: 2.5px;
-          color: rgba(255,255,255,0.25);
-          text-transform: uppercase;
-          margin-top: 8px;
-        }
-
-        /* ── Rule ─────────────────────────────────────────── */
         .rule {
           display: flex;
           align-items: center;
           gap: 10px;
           padding: 24px 32px 0;
         }
+        .rule-line    { flex: 1; height: 1px; background: rgba(255,255,255,0.07); }
+        .rule-diamond { font-size: 0.5rem; color: #6366f1; opacity: 0.7; }
 
-        .rule-line {
-          flex: 1;
-          height: 1px;
-          background: rgba(255,255,255,0.07);
-        }
-
-        .rule-diamond {
-          font-size: 0.5rem;
-          color: #6366f1;
-          opacity: 0.7;
-        }
-
-        /* ── Form ─────────────────────────────────────────── */
+        /* ── Form ── */
         .form {
           padding: 24px 32px 32px;
           display: flex;
           flex-direction: column;
           gap: 16px;
         }
-
-        .field-wrap {
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-        }
-
+        .field-wrap { display: flex; flex-direction: column; gap: 6px; }
         .field-label {
-          font-size: 0.7rem;
-          font-weight: 600;
-          letter-spacing: 1.5px;
-          text-transform: uppercase;
-          color: rgba(255,255,255,0.35);
-          padding-left: 4px;
+          font-size: 0.7rem; font-weight: 600; letter-spacing: 1.5px;
+          text-transform: uppercase; color: rgba(255,255,255,0.35); padding-left: 4px;
         }
-
         .field {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          background: #1a1a24;
-          border: 1px solid rgba(255,255,255,0.08);
-          border-radius: 10px;
-          padding: 0 16px;
+          display: flex; align-items: center; gap: 10px;
+          background: #1a1a24; border: 1px solid rgba(255,255,255,0.08);
+          border-radius: 10px; padding: 0 16px;
           transition: border-color 0.2s, background 0.2s;
         }
-
-        .field:focus-within {
-          border-color: rgba(99,102,241,0.5);
-          background: #1e1e2e;
-        }
-
-        .field.has-value {
-          border-color: rgba(255,255,255,0.12);
-        }
-
+        .field:focus-within { border-color: rgba(99,102,241,0.5); background: #1e1e2e; }
+        .field.has-value    { border-color: rgba(255,255,255,0.12); }
         .f-icon {
-          width: 16px;
-          height: 16px;
-          color: rgba(255,255,255,0.2);
-          flex-shrink: 0;
-          transition: color 0.2s;
+          width: 16px; height: 16px; color: rgba(255,255,255,0.2);
+          flex-shrink: 0; transition: color 0.2s;
         }
-
-        .field:focus-within .f-icon {
-          color: #818cf8;
-        }
-
+        .field:focus-within .f-icon { color: #818cf8; }
         .f-input {
-          flex: 1;
-          background: transparent;
-          border: none;
-          outline: none;
-          padding: 13px 0;
-          font-size: 0.92rem;
-          color: #e8e8f0;
-          letter-spacing: 0.5px;
-          font-family: 'Consolas', 'Monaco', monospace;
+          flex: 1; background: transparent; border: none; outline: none;
+          padding: 13px 0; font-size: 0.92rem; color: #e8e8f0;
+          letter-spacing: 0.5px; font-family: 'Consolas','Monaco', monospace;
         }
+        .f-input::placeholder { color: rgba(255,255,255,0.18); }
 
-        .f-input::placeholder {
-          color: rgba(255,255,255,0.18);
-          font-family: inherit;
-        }
-
-        /* ── Submit button ────────────────────────────────── */
+        /* ── Submit button ── */
         .submit-btn {
-          margin-top: 4px;
-          width: 100%;
-          padding: 13px;
-          border-radius: 10px;
-          border: none;
+          width: 100%; padding: 13px; border-radius: 10px; border: none;
           cursor: pointer;
           background: linear-gradient(135deg, #6366f1, #7c3aed);
-          color: #fff;
-          font-size: 0.88rem;
-          font-weight: 700;
-          letter-spacing: 1px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 8px;
+          color: #fff; font-size: 0.88rem; font-weight: 700; letter-spacing: 1px;
+          display: flex; align-items: center; justify-content: center; gap: 8px;
           transition: opacity 0.2s, transform 0.15s;
           box-shadow: 0 4px 16px rgba(99,102,241,0.3);
         }
-
         .submit-btn:hover:not(:disabled) {
-          opacity: 0.9;
-          transform: translateY(-1px);
+          opacity: 0.9; transform: translateY(-1px);
           box-shadow: 0 6px 22px rgba(99,102,241,0.4);
         }
-
-        .submit-btn:active:not(:disabled) {
-          transform: translateY(0);
-        }
-
-        .submit-btn:disabled {
-          opacity: 0.3;
-          cursor: not-allowed;
-        }
-
+        .submit-btn:active:not(:disabled) { transform: translateY(0); }
+        .submit-btn:disabled { opacity: 0.3; cursor: not-allowed; }
         .submit-btn.loading { pointer-events: none; }
 
-        /* ── Spinner ──────────────────────────────────────── */
+        /* ── Spinner ── */
         .spinner {
-          display: inline-block;
-          width: 18px;
-          height: 18px;
-          border: 2.5px solid rgba(255,255,255,0.2);
-          border-top-color: #fff;
-          border-radius: 50%;
-          animation: spin 0.65s linear infinite;
+          display: inline-block; width: 18px; height: 18px;
+          border: 2.5px solid rgba(255,255,255,0.2); border-top-color: #fff;
+          border-radius: 50%; animation: spin 0.65s linear infinite;
         }
-
         @keyframes spin { to { transform: rotate(360deg); } }
 
-        /* ── Result card ──────────────────────────────────── */
-        .result-card {
-          margin: 24px 32px 32px;
+        /* ── Toast messages ── */
+        .toast {
+          margin: 0 16px 16px;
           border-radius: 12px;
-          padding: 24px;
+          overflow: hidden;
+          animation: slideUp 0.3s cubic-bezier(0.34,1.56,0.64,1);
+        }
+        @keyframes slideUp {
+          from { opacity: 0; transform: translateY(12px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+
+        .toast-valid     { background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.25); }
+        .toast-duplicate { background: rgba(234,179,8,0.07);  border: 1px solid rgba(234,179,8,0.25); }
+        .toast-invalid   { background: rgba(239,68,68,0.07);  border: 1px solid rgba(239,68,68,0.22); }
+        .toast-error     { background: rgba(239,68,68,0.07);  border: 1px solid rgba(239,68,68,0.22); }
+
+        .toast-body {
           display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 16px;
-          animation: popIn 0.3s cubic-bezier(0.34,1.56,0.64,1);
-        }
-
-        @keyframes popIn {
-          from { opacity: 0; transform: scale(0.92) translateY(8px); }
-          to   { opacity: 1; transform: scale(1) translateY(0); }
-        }
-
-        .valid-card {
-          background: rgba(16, 185, 129, 0.08);
-          border: 1px solid rgba(16,185,129,0.25);
-        }
-
-        .invalid-card {
-          background: rgba(239,68,68,0.07);
-          border: 1px solid rgba(239,68,68,0.22);
-        }
-
-        /* ── Badge ────────────────────────────────────────── */
-        .result-badge {
-          width: 52px;
-          height: 52px;
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .result-badge svg {
-          width: 26px;
-          height: 26px;
-        }
-
-        .valid-badge {
-          background: rgba(16,185,129,0.15);
-          border: 1.5px solid rgba(16,185,129,0.4);
-          color: #34d399;
-        }
-
-        .invalid-badge {
-          background: rgba(239,68,68,0.12);
-          border: 1.5px solid rgba(239,68,68,0.35);
-          color: #f87171;
-        }
-
-        .result-title {
-          font-size: 1rem;
-          font-weight: 800;
-          letter-spacing: 2px;
-          text-transform: uppercase;
-        }
-
-        .valid-title   { color: #34d399; }
-        .invalid-title { color: #f87171; }
-
-        /* ── Info grid ────────────────────────────────────── */
-        .info-grid {
-          width: 100%;
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-        }
-
-        .info-item {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 8px 12px;
-          background: rgba(0,0,0,0.25);
-          border-radius: 7px;
-          border: 1px solid rgba(255,255,255,0.04);
+          align-items: flex-start;
           gap: 12px;
+          padding: 14px 16px;
         }
 
-        .info-key {
-          font-size: 0.68rem;
-          font-weight: 600;
-          letter-spacing: 1.5px;
-          text-transform: uppercase;
-          color: rgba(255,255,255,0.3);
+        .toast-icon {
+          width: 36px; height: 36px; border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
           flex-shrink: 0;
         }
+        .toast-icon svg { width: 18px; height: 18px; }
+        .toast-icon-valid     { background: rgba(16,185,129,0.15); border: 1.5px solid rgba(16,185,129,0.4); color: #34d399; }
+        .toast-icon-duplicate { background: rgba(234,179,8,0.15);  border: 1.5px solid rgba(234,179,8,0.4);  color: #fbbf24; }
+        .toast-icon-invalid   { background: rgba(239,68,68,0.12);  border: 1.5px solid rgba(239,68,68,0.35); color: #f87171; }
+        .toast-icon-error     { background: rgba(239,68,68,0.12);  border: 1.5px solid rgba(239,68,68,0.35); color: #f87171; }
 
-        .info-val {
-          font-size: 0.88rem;
-          font-weight: 600;
-          color: #e8e8f0;
-          text-align: right;
+        .toast-content {
+          flex: 1;
+          min-width: 0;
+        }
+        .toast-title {
+          font-size: 0.82rem; font-weight: 800; letter-spacing: 1.5px;
+          text-transform: uppercase; margin: 0 0 4px;
+        }
+        .valid-title     { color: #34d399; }
+        .duplicate-title { color: #fbbf24; }
+        .invalid-title   { color: #f87171; }
+
+        .toast-details {
+          font-size: 0.78rem; color: rgba(255,255,255,0.55);
           font-family: 'Consolas', monospace;
+          display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+        }
+        .toast-sep { color: rgba(255,255,255,0.15); }
+
+        .toast-sub {
+          font-size: 0.75rem; color: rgba(255,255,255,0.35);
+          margin: 0; line-height: 1.5;
         }
 
-        /* ── Invalid desc ─────────────────────────────────── */
-        .result-desc {
-          font-size: 0.8rem;
-          color: rgba(255,255,255,0.35);
-          text-align: center;
-          line-height: 1.7;
+        .toast-close {
+          background: none; border: none; color: rgba(255,255,255,0.25);
+          font-size: 1.2rem; cursor: pointer; padding: 0 2px;
+          line-height: 1; flex-shrink: 0;
+          transition: color 0.2s;
+        }
+        .toast-close:hover { color: rgba(255,255,255,0.6); }
+
+        /* ── Countdown progress bar ── */
+        .toast-progress {
+          height: 3px;
+          background: rgba(255,255,255,0.05);
+        }
+        .toast-progress-bar {
+          height: 100%;
+          animation: countdown 3s linear forwards;
+        }
+        .progress-valid     { background: #34d399; }
+        .progress-duplicate { background: #fbbf24; }
+        .progress-invalid   { background: #f87171; }
+        .progress-error     { background: #f87171; }
+
+        @keyframes countdown {
+          from { width: 100%; }
+          to   { width: 0%; }
         }
 
-        /* ── Ghost button ─────────────────────────────────── */
-        .ghost-btn {
-          background: transparent;
-          border: 1px solid rgba(255,255,255,0.1);
-          color: rgba(255,255,255,0.4);
-          border-radius: 8px;
-          padding: 8px 20px;
-          font-size: 0.78rem;
-          letter-spacing: 0.5px;
-          cursor: pointer;
-          transition: border-color 0.2s, color 0.2s;
-        }
-
-        .ghost-btn:hover {
-          border-color: rgba(99,102,241,0.4);
-          color: #818cf8;
-        }
-
-        /* ── Footer ───────────────────────────────────────── */
-        .footer-note {
-          padding: 20px 32px 24px;
-          text-align: center;
-          font-size: 0.62rem;
-          letter-spacing: 2px;
-          text-transform: uppercase;
-          color: rgba(255,255,255,0.12);
-        }
-
-        /* ── Responsive ───────────────────────────────────── */
         @media (max-width: 480px) {
           .card        { border-radius: 0; border-left: none; border-right: none; }
           .jalsa-title { font-size: 2.4rem; }
           .form, .rule, .header { padding-left: 24px; padding-right: 24px; }
-          .result-card { margin-left: 24px; margin-right: 24px; }
+          .toast { margin-left: 12px; margin-right: 12px; }
         }
       `}</style>
     </div>
